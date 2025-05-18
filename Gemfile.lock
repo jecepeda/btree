@@ -103,6 +103,7 @@ GEM
 
 PLATFORMS
   arm64-darwin-23
+  arm64-darwin-24
 
 DEPENDENCIES
   btree!
@@ -115,4 +116,4 @@ DEPENDENCIES
   tapioca
 
 BUNDLED WITH
-   2.4.19
+   2.6.2

@@ -3,7 +3,7 @@
 
 require "test_helper"
 
-class TestBtree < Minitest::Test
+class BtreeTest < Minitest::Test
   def test_we_can_find_the_node
     btree = Btree::Btree.new(
       root_node: Btree::Node.new(
@@ -32,5 +32,74 @@ class TestBtree < Minitest::Test
     assert_equal [2], btree.find(2)&.keys
     assert_equal [3], btree.find(3)&.keys
     assert_nil btree.find(40)
+  end
+
+  def test_we_insert_nodes_into_btree
+    btree = Btree::Btree.new
+
+    1.upto(7) do |i|
+      assert btree.insert i
+    end
+    assert_equal(
+      { keys: [3, 5],
+        children: [
+          { keys: [2],
+            children: [
+              { keys: [1], children: [], is_leaf: true },
+              { keys: [2], children: [], is_leaf: true }
+            ],
+            is_leaf: false },
+          { keys: [4],
+            children: [
+              { keys: [3], children: [], is_leaf: true },
+              { keys: [4], children: [], is_leaf: true }
+            ],
+            is_leaf: false },
+          { keys: [6],
+            children: [
+              { keys: [5], children: [], is_leaf: true },
+              { keys: [6, 7], children: [], is_leaf: true }
+            ],
+            is_leaf: false }
+        ],
+        is_leaf: false },
+      btree.to_h
+    )
+  end
+
+  def test_we_insert_nodes_into_btree_different_max_degree
+    btree = Btree::Btree.new(max_degree: 5)
+
+    1.upto(15) do |i|
+      assert btree.insert i
+    end
+
+    assert_equal(
+      {
+        keys: [7],
+        children: [
+          {
+            keys: [3, 5],
+            children: [
+              { keys: [1, 2], children: [], is_leaf: true },
+              { keys: [3, 4], children: [], is_leaf: true },
+              { keys: [5, 6], children: [], is_leaf: true }
+            ],
+            is_leaf: false
+          },
+          {
+            keys: [9, 11, 13],
+            children: [
+              { keys: [7, 8], children: [], is_leaf: true },
+              { keys: [9, 10], children: [], is_leaf: true },
+              { keys: [11, 12], children: [], is_leaf: true },
+              { keys: [13, 14, 15], children: [], is_leaf: true }
+            ],
+            is_leaf: false
+          }
+        ], is_leaf: false
+      },
+      btree.to_h
+    )
   end
 end

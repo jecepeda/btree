@@ -46,11 +46,12 @@ module Btree
 
     sig { returns(T::Hash[Symbol, T.anything]) }
     def to_h
-      {
-        keys:,
-        children: children.map(&:to_h),
-        is_leaf:
+      result = {
+        keys: keys,
+        children: children.map(&:to_h)
       }
+      result[:is_leaf] = true if is_leaf
+      result
     end
 
     def root?

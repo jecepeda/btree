@@ -47,22 +47,18 @@ class BtreeTest < Minitest::Test
             children: [
               { keys: [1], children: [], is_leaf: true },
               { keys: [2], children: [], is_leaf: true }
-            ],
-            is_leaf: false },
+            ] },
           { keys: [4],
             children: [
               { keys: [3], children: [], is_leaf: true },
               { keys: [4], children: [], is_leaf: true }
-            ],
-            is_leaf: false },
+            ] },
           { keys: [6],
             children: [
               { keys: [5], children: [], is_leaf: true },
               { keys: [6, 7], children: [], is_leaf: true }
-            ],
-            is_leaf: false }
-        ],
-        is_leaf: false },
+            ] }
+        ] },
       btree.to_h
     )
   end
@@ -70,7 +66,7 @@ class BtreeTest < Minitest::Test
   def test_we_insert_nodes_into_btree_different_max_degree
     btree = Btree::Btree.new(max_degree: 5)
 
-    1.upto(15) do |i|
+    1.upto(16) do |i|
       assert btree.insert i
     end
 
@@ -84,8 +80,7 @@ class BtreeTest < Minitest::Test
               { keys: [1, 2], children: [], is_leaf: true },
               { keys: [3, 4], children: [], is_leaf: true },
               { keys: [5, 6], children: [], is_leaf: true }
-            ],
-            is_leaf: false
+            ]
           },
           {
             keys: [9, 11, 13],
@@ -93,11 +88,10 @@ class BtreeTest < Minitest::Test
               { keys: [7, 8], children: [], is_leaf: true },
               { keys: [9, 10], children: [], is_leaf: true },
               { keys: [11, 12], children: [], is_leaf: true },
-              { keys: [13, 14, 15], children: [], is_leaf: true }
-            ],
-            is_leaf: false
+              { keys: [13, 14, 15, 16], children: [], is_leaf: true }
+            ]
           }
-        ], is_leaf: false
+        ]
       },
       btree.to_h
     )

@@ -1,8 +1,7 @@
-# typed: true
+# typed: false
 # frozen_string_literal: true
 
 require_relative "btree/version"
-require "sorbet-runtime"
 require "debug"
 
 ##
@@ -17,41 +16,51 @@ module Btree
 
   # each node must have up to M elements
   class Node
-    extend T::Sig
+    attr_accessor :keys, :children, :is_leaf, :parent
 
-    sig { returns(T.nilable(Node)) }
-    attr_accessor :parent
-
-    sig { returns(T::Array[Integer]) }
-    attr_accessor :keys
-
-    sig { returns(T::Array[Node]) }
-    attr_accessor :children
-
-    sig do
-      returns(T::Boolean)
-    end
-    attr_accessor :is_leaf
-
-    sig { params(children: T::Array[Node], keys: T::Array[Integer], is_leaf: T::Boolean).void }
     def initialize(children: [], keys: [], is_leaf: false)
       @children = children
       @is_leaf = is_leaf
       @keys = keys
 
+      set_parent
+    end
+
+    def set_parent
       @children.each do |children|
         children.parent = self
       end
     end
 
-    sig { returns(T::Hash[Symbol, T.anything]) }
     def to_h
-      result = {
-        keys: keys,
-        children: children.map(&:to_h)
-      }
-      result[:is_leaf] = true if is_leaf
-      result
+      if is_leaf
+        {
+          keys: keys,
+          is_leaf: true
+        }
+      else
+        {
+          keys: keys,
+          children: children.map(&:to_h)
+        }
+      end
+    end
+
+    def find_adjacent_node
+      return [nil, nil, false] if parent.nil?
+
+      idx = parent.children.find_index { |child| child == self }
+      return [nil, nil, false] if idx.nil?
+
+      if idx.zero?
+        [parent.keys[idx], parent.children[idx + 1], false]
+      else
+        [parent.keys[idx - 1], parent.children[idx - 1], true]
+      end
+    end
+
+    def entries
+      keys.size
     end
 
     def root?
@@ -64,15 +73,8 @@ module Btree
   end
 
   class Btree
-    extend T::Sig
+    attr_reader :root_node, :max_degree
 
-    sig { returns(T.nilable(Node)) }
-    attr_reader :root_node
-
-    sig { returns(Integer) }
-    attr_reader :max_degree
-
-    sig { params(root_node: T.nilable(Node), max_degree: Integer).void }
     def initialize(root_node: nil, max_degree: 3)
       @root_node = root_node
       @max_degree = max_degree
@@ -86,42 +88,114 @@ module Btree
       end
     end
 
-    sig { params(k: Integer).returns(T.nilable(Node)) }
+    def min_values(is_leaf)
+      if is_leaf
+        (max_degree - 1) / 2
+      else
+        max_degree / 2
+      end
+    end
+
     def find(k)
       find_node(k, for_insert: false)
     end
 
     # we just store keys for now
-    sig { params(value: Integer).returns(T::Boolean) }
     def insert(value)
       if @root_node.nil?
         @root_node = Node.new(keys: [value], is_leaf: true)
         return true
       end
 
-      node = T.must(find_node(value, for_insert: true))
+      node = find_node(value, for_insert: true)
 
       # if the key is already inserted we return
       return false if node.keys.any? { |key| key == value }
 
       insert_in_leaf(node:, value:)
-      return true if node.keys.size <= (max_degree - 1)
+      return true if node.keys.size < max_degree
 
       # we need to split. we always insert the node
       # into the leaf for simplicity
       new_node = Node.new(is_leaf: true)
       split = node.keys.size / 2
-      new_node.keys = T.must(node.keys.slice(split, node.keys.size))
-      node.keys = T.must(node.keys.slice(0, split))
-      new_value = T.must(new_node.keys.first)
+      new_node.keys = (node.keys.slice(split, node.keys.size))
+      node.keys = (node.keys.slice(0, split))
+      new_value = new_node.keys.first
       insert_in_parent(node:, new_node:, new_value:)
 
       true
     end
 
+    def delete(value)
+      node = find_node(value, for_insert: true)
+      return if node.nil?
+
+      delete_node(node, value, nil)
+    end
+
     private
 
-    sig { params(node: Node, new_node: Node, new_value: Integer).void }
+    def delete_node(node, value, pointer)
+      node.keys.delete_at(node.keys.find_index(value) || node.keys.size)
+      node.children.delete_at(node.children.find_index(pointer)) unless pointer.nil?
+      if node.root? && node.children.size == 1
+        @root_node = node.children.first
+        @root_node.parent = nil
+      elsif node.entries < min_values(node.leaf?)
+        key_prime, node_prime, predecessor = node.find_adjacent_node
+
+        entries = node.entries + (node_prime&.entries || 0)
+        # coalesce nodes
+        if entries < max_degree
+          unless node_prime.nil?
+            node, node_prime = node_prime, node unless predecessor
+            if node.leaf?
+              node_prime.keys += node.keys
+            else
+              node_prime.keys.append(key_prime)
+              node_prime.keys += node.keys
+              node_prime.children += node.children
+              node_prime.set_parent
+            end
+          end
+          delete_node(node.parent, key_prime, node) unless node.parent.nil?
+        elsif predecessor && !node.leaf?
+          last_child = node_prime.children.pop
+          last_key = node_prime.keys.pop
+          node.keys.prepend(key_prime)
+          node.children.prepend(last_child)
+          node.set_parent
+          replace_parent(node, key_prime, last_key)
+        elsif predecessor && node.leaf?
+          last_key = node_prime.keys.pop
+          node.keys.prepend(last_key)
+          replace_parent(node, key_prime, last_key)
+        elsif !node.leaf?
+          first_child = node_prime.children.shift
+          first_key = node_prime.keys.shift
+          node.keys.append(key_prime)
+          node.children.append(first_child)
+          node.set_parent
+          replace_parent(node, key_prime, first_key)
+        elsif node.leaf?
+          first_key = node_prime.keys.shift
+          node.keys.append(first_key)
+          replace_parent(node, key_prime, node_prime.keys.first)
+        end
+      end
+    end
+
+    def replace_parent(node, value, new_value)
+      node.parent.keys.map! do |key|
+        if key == value
+          new_value
+        else
+          key
+        end
+      end
+    end
+
     def insert_in_parent(node:, new_node:, new_value:)
       if node.root?
         new_root = Node.new(keys: [new_value], children: [node, new_node])
@@ -129,31 +203,32 @@ module Btree
         return
       end
 
-      parent = T.must(node.parent)
+      parent = node.parent
 
-      if parent.children.size < max_degree
-        parent.children << new_node
-        parent.keys << new_value
-        new_node.parent = parent
-        return
-      end
+      idx = parent.children.find_index(node)
+      parent.children.insert(idx + 1, new_node)
+      parent.keys.insert(idx, new_value)
+      new_node.parent = parent
 
-      children = parent.children + [new_node]
-      keys = parent.keys + [new_value]
-      mid = keys.size / 2
+      return if parent.children.size <= max_degree
 
-      parent.children = T.must(children.slice(0, children.size / 2))
-      parent.keys = T.must(keys.slice(0, mid))
+      children = parent.children
+      keys = parent.keys
+
+      mid_keys = (keys.size / 2).ceil
+      mid_children = (children.size / 2.0).ceil
+
+      parent.children = (children.slice(0, mid_children))
+      parent.keys = (keys.slice(0, mid_keys))
 
       new_parent = Node.new(
-        keys: T.must(keys.slice(mid + 1, keys.size)),
-        children: T.must(children.slice(children.size / 2, children.size))
+        keys: keys.slice(mid_keys + 1, keys.size),
+        children: children.slice(mid_children, children.size)
       )
 
-      insert_in_parent(node: parent, new_node: new_parent, new_value: T.must(keys[mid]))
+      insert_in_parent(node: parent, new_node: new_parent, new_value: keys[mid_keys])
     end
 
-    sig { params(node: Node, value: Integer).void }
     def insert_in_leaf(node:, value:)
       insert_at = node.keys.bsearch_index do |key|
         key >= value
@@ -162,27 +237,29 @@ module Btree
       if insert_at.nil?
         node.keys << value
       else
-        node.keys.insert(T.must(insert_at), value)
+        node.keys.insert(insert_at, value)
       end
     end
 
-    sig { params(k: Integer, for_insert: T::Boolean).returns(T.nilable(Node)) }
     def find_node(k, for_insert: false)
       return if root_node.nil?
 
-      i = T.let(nil, T.nilable(Integer))
-      node = T.must(root_node)
+      i = nil
+      node = root_node
       while !node.leaf?
-        key, min = node.keys.each_with_index.min
+        key = node.keys.filter do |key|
+          key >= k
+        end.min
+        min = node.keys.find_index { |elem| elem == key }
         i = (min if !key.nil? && k <= key)
 
         node =
           if i.nil?
-            T.must(node.children.last)
+            node.children.last
           elsif k == key
-            T.must(node.children[i + 1])
+            node.children[i + 1]
           else
-            T.must(node.children[i])
+            node.children[i]
           end
       end
 

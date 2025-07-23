@@ -1,12 +1,134 @@
 # typed: true
 # frozen_string_literal: true
 
-require "test_helper"
+require_relative "test_helper"
 
 class BtreeTest < Minitest::Test
   def test_base_btree_to_h
     btree = Btree::Btree.new
     assert_equal({}, btree.to_h)
+  end
+
+  def test_string_keys_insertion_and_retrieval
+    btree = Btree::Btree.new(key_type: String)
+    strings = %w[apple banana cherry date elderberry fig grape]
+
+    # Insert all strings
+    strings.each do |str|
+      assert btree.insert(str)
+
+      # Verify all strings can be found
+      assert_includes(btree.find(str)&.keys, str)
+    end
+
+    # Verify a non-existent string returns nil
+    assert_nil btree.find("nonexistent")
+  end
+
+  def test_string_keys_with_special_characters
+    btree = Btree::Btree.new(key_type: String)
+    special_strings = ["a#b", "c&d", "e-f", "g_h", "i.j", "k!l", "m@n"]
+
+    # Insert all special strings
+    special_strings.each do |str|
+      assert btree.insert(str)
+
+      # Verify all special strings can be found
+      assert_includes(btree.find(str)&.keys, str)
+    end
+  end
+
+  def test_type_checking_enforcement
+    btree = Btree::Btree.new(key_type: String)
+
+    # String insertion should succeed
+    assert btree.insert("test")
+
+    # Integer insertion should raise TypeError
+    assert_raises(TypeError) do
+      btree.insert(42)
+    end
+  end
+
+  def test_default_integer_enforcement
+    btree = Btree::Btree.new
+
+    # Integer insertions should succeed
+    assert btree.insert(42)
+    assert btree.insert(10)
+
+    # String insertion should raise TypeError
+    assert_raises(TypeError) do
+      btree.insert("apple")
+    end
+
+    # Verify integers can be found
+    assert_includes(btree.find(42)&.keys, 42)
+    assert_includes(btree.find(10)&.keys, 10)
+  end
+
+  def test_mixed_types_with_nil_type_enforcement
+    btree = Btree::Btree.new(key_type: nil)
+
+    # Integer insertions should succeed
+    assert btree.insert(42)
+    assert btree.insert(10)
+
+    # String insertion should raise TypeError because first insertion was Integer
+    assert_raises(TypeError) do
+      btree.insert("apple")
+    end
+  end
+
+  def test_custom_comparable_objects
+    # Define a custom comparable class
+    person_class = Class.new do
+      include Comparable
+      attr_reader :name, :age
+
+      def initialize(name, age)
+        @name = name
+        @age = age
+      end
+
+      def <=>(other)
+        # Compare by age
+        @age <=> other.age
+      end
+
+      def to_s
+        "#{@name}(#{@age})"
+      end
+    end
+    # Create some person objects
+    alice = person_class.new("Alice", 30)
+    bob = person_class.new("Bob", 25)
+    charlie = person_class.new("Charlie", 35)
+    david = person_class.new("David", 20)
+    eve = person_class.new("Eve", 40)
+
+    # Create a BTree for these custom objects
+    btree = Btree::Btree.new(key_type: person_class)
+
+    # Insert the objects
+    assert btree.insert(alice)
+    assert btree.insert(bob)
+    assert btree.insert(charlie)
+    assert btree.insert(david)
+    assert btree.insert(eve)
+
+    # Verify objects can be found
+    assert_includes(btree.find(alice)&.keys, alice)
+    assert_includes(btree.find(bob)&.keys, bob)
+    assert_includes(btree.find(charlie)&.keys, charlie)
+    assert_includes(btree.find(david)&.keys, david)
+    assert_includes(btree.find(eve)&.keys, eve)
+
+    # Create a new person with the same age as alice
+    alice_twin = person_class.new("Alice Twin", 30)
+
+    # Since comparison is by age, we should find alice when searching for alice_twin
+    assert_includes(btree.find(alice_twin)&.keys, alice)
   end
 
   def test_we_can_find_the_node
@@ -37,6 +159,52 @@ class BtreeTest < Minitest::Test
     assert_equal [2], btree.find(2)&.keys
     assert_equal [3], btree.find(3)&.keys
     assert_nil btree.find(40)
+  end
+
+  def test_validate_node_keys_rejects_mixed_types
+    # Create a tree with mixed types (Integer and String)
+    mixed_tree = Btree::Node.new(
+      keys: [3],
+      children: [
+        Btree::Node.new(
+          keys: [2],
+          children: [
+            Btree::Node.new(keys: [1], is_leaf: true),
+            Btree::Node.new(keys: ["2"], is_leaf: true) # String instead of Integer
+          ]
+        ),
+        Btree::Node.new(keys: [10], is_leaf: true)
+      ]
+    )
+
+    # This should raise TypeError when validate_node_keys runs during initialization
+    error = assert_raises(TypeError) do
+      Btree::Btree.new(root_node: mixed_tree)
+    end
+
+    assert_match(/Key .+ is not of type/, error.message)
+  end
+
+  def test_validate_node_keys_with_explicit_type
+    # Create a tree with Integer keys
+    int_tree = Btree::Node.new(
+      keys: [3],
+      children: [
+        Btree::Node.new(keys: [1, 2], is_leaf: true),
+        Btree::Node.new(keys: [4, 5], is_leaf: true)
+      ]
+    )
+
+    # String type specified but tree has Integer keys
+    error = assert_raises(TypeError) do
+      Btree::Btree.new(root_node: int_tree, key_type: String)
+    end
+
+    assert_match(/Key .+ is not of type String/, error.message)
+
+    # Correct key_type should work
+    btree = Btree::Btree.new(root_node: int_tree, key_type: Integer)
+    assert_equal Integer, btree.key_type
   end
 
   def test_exensive_find_node
@@ -268,5 +436,108 @@ class BtreeTest < Minitest::Test
       btree.delete(elem)
     end
     assert_equal({ keys: [], is_leaf: true }, btree.to_h, "keys used: #{shuffled}")
+  end
+
+  def test_type_inference_from_first_insertion
+    # Test with String as first insertion
+    string_btree = Btree::Btree.new
+
+    # First insertion is a String, should set the key_type to String
+    assert string_btree.insert("apple")
+    assert_equal String, string_btree.key_type
+    assert string_btree.insert("banana")
+
+    # Integer insertion should now raise TypeError
+    assert_raises(TypeError) do
+      string_btree.insert(42)
+    end
+
+    # Test with a Symbol as first insertion
+    symbol_btree = Btree::Btree.new
+
+    # First insertion is a Symbol, should set the key_type to Symbol
+    assert symbol_btree.insert(:apple)
+    assert_equal Symbol, symbol_btree.key_type
+    assert symbol_btree.insert(:banana)
+
+    # String insertion should now raise TypeError
+    assert_raises(TypeError) do
+      symbol_btree.insert("apple")
+    end
+
+    # Test with custom class as first insertion
+    person_class = Class.new do
+      include Comparable
+      attr_reader :name, :age
+
+      def initialize(name, age)
+        @name = name
+        @age = age
+      end
+
+      def <=>(other)
+        @age <=> other.age
+      end
+    end
+
+    custom_btree = Btree::Btree.new
+    alice = person_class.new("Alice", 30)
+    bob = person_class.new("Bob", 25)
+
+    # First insertion sets the key_type to the custom class
+    assert custom_btree.insert(alice)
+    assert_equal person_class, custom_btree.key_type
+    assert custom_btree.insert(bob)
+
+    # String insertion should now raise TypeError
+    assert_raises(TypeError) do
+      custom_btree.insert("apple")
+    end
+  end
+
+  def test_non_comparable_objects_raise_error
+    # Test with a class that doesn't implement <=>
+    non_comparable_class = Class.new do
+      attr_reader :value
+
+      def initialize(value)
+        @value = value
+      end
+
+      # Explicitly delete <=> method if it's inherited
+      undef :<=> if method_defined?(:<=>)
+    end
+
+    btree = Btree::Btree.new
+    obj = non_comparable_class.new(42)
+
+    # Should raise NonComparableObjectError
+    error = assert_raises(Btree::NonComparableObjectError) do
+      btree.insert(obj)
+    end
+    assert_match(/must implement the <=> operator/, error.message)
+
+    # Test with a class that implements <=> but returns nil
+    bad_comparable_class = Class.new do
+      attr_reader :value
+
+      def initialize(value)
+        @value = value
+      end
+
+      def <=>(_other)
+        # Incorrectly returns nil for objects of the same class
+        nil
+      end
+    end
+
+    btree = Btree::Btree.new
+    bad_obj = bad_comparable_class.new(42)
+
+    # Should raise NonComparableObjectError
+    error = assert_raises(Btree::NonComparableObjectError) do
+      btree.insert(bad_obj)
+    end
+    assert_match(/returns nil from <=> operator/, error.message)
   end
 end

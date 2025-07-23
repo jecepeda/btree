@@ -1,9 +1,13 @@
 AllCops:
   TargetRubyVersion: 3.1.2
+  NewCops: enable
 
 Style/StringLiterals:
   Enabled: true
   EnforcedStyle: double_quotes
+
+Naming/PredicateMethod:
+  Enabled: false
 
 Style/StringLiteralsInInterpolation:
   Enabled: true

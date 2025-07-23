@@ -13,6 +13,7 @@ require "debug"
 #
 module Btree
   class Error < StandardError; end
+  class NonComparableObjectError < Error; end
 
   # each node must have up to M elements
   class Node
@@ -73,11 +74,17 @@ module Btree
   end
 
   class Btree
-    attr_reader :root_node, :max_degree
+    attr_reader :root_node, :max_degree, :key_type
 
-    def initialize(root_node: nil, max_degree: 3)
+    def initialize(root_node: nil, max_degree: 3, key_type: nil)
       @root_node = root_node
       @max_degree = max_degree
+      @key_type = key_type
+
+      # Infer key_type from root_node if provided and key_type is nil
+      @key_type = infer_key_type_from_node(@root_node) if @root_node && @key_type.nil?
+
+      validate_node_keys(@root_node) if @root_node
     end
 
     def to_h
@@ -102,6 +109,9 @@ module Btree
 
     # we just store keys for now
     def insert(value)
+      validate_comparable(value)
+      validate_key_type(value)
+
       if @root_node.nil?
         @root_node = Node.new(keys: [value], is_leaf: true)
         return true
@@ -110,7 +120,7 @@ module Btree
       node = find_node(value, for_insert: true)
 
       # if the key is already inserted we return
-      return false if node.keys.any? { |key| key == value }
+      return false if node.keys.any? { |key| (key <=> value).zero? }
 
       insert_in_leaf(node:, value:)
       return true if node.keys.size < max_degree
@@ -231,7 +241,7 @@ module Btree
 
     def insert_in_leaf(node:, value:)
       insert_at = node.keys.bsearch_index do |key|
-        key >= value
+        (key <=> value) >= 0
       end
 
       if insert_at.nil?
@@ -248,15 +258,15 @@ module Btree
       node = root_node
       while !node.leaf?
         key = node.keys.filter do |key|
-          key >= k
+          (key <=> k) >= 0
         end.min
-        min = node.keys.find_index { |elem| elem == key }
-        i = (min if !key.nil? && k <= key)
+        min = node.keys.find_index { |elem| (elem <=> key).zero? } if key
+        i = (min if !key.nil? && (k <=> key) <= 0)
 
         node =
           if i.nil?
             node.children.last
-          elsif k == key
+          elsif (k <=> key).zero?
             node.children[i + 1]
           else
             node.children[i]
@@ -266,10 +276,51 @@ module Btree
       return node if for_insert
 
       node.keys.each do |key| # rubocop:disable Style/HashEachMethods
-        return node if key == k
+        return node if (key <=> k).zero?
       end
 
       nil
+    end
+
+    def validate_key_type(value)
+      if @key_type.nil?
+        # Infer type from first insertion
+        @key_type = value.class
+      elsif !value.is_a?(@key_type)
+        raise TypeError, "Key #{value.inspect} is not of type #{@key_type}"
+      end
+    end
+
+    def validate_comparable(value)
+      # Check if the object implements the spaceship operator
+      unless value.respond_to?(:<=>)
+        raise NonComparableObjectError, "Object #{value.inspect} must implement the <=> operator for comparison"
+      end
+
+      # Test comparison with itself to ensure it returns a valid result
+      comparison_result = value <=> value # rubocop:disable Lint/BinaryOperatorWithIdenticalOperands
+      return unless comparison_result.nil?
+
+      raise NonComparableObjectError,
+            "Object #{value.inspect} returns nil from <=> operator when comparing with itself"
+    end
+
+    def validate_node_keys(node)
+      return if node.nil?
+
+      # Validate keys in current node
+      node.keys.each do |key| # rubocop:disable Style/HashEachMethods
+        raise TypeError, "Key #{key.inspect} is not of type #{@key_type}" unless key.is_a?(@key_type)
+      end
+
+      # Recursively validate children
+      node.children.each { |child| validate_node_keys(child) }
+    end
+
+    def infer_key_type_from_node(node)
+      return nil if node.nil? || node.keys.empty?
+
+      node.keys.first.class
     end
   end
 end
